@@ -19,7 +19,5 @@ Regras:
 - Se a busca não retornar nenhum trecho, responda exatamente: NENHUM_TRECHO_ENCONTRADO`,
   model: ollama(config.llmModel),
   // MCP tools are loaded once at module init; `tutorDocs_searchMaterials` is available here.
-  getTools: async () => {
-    return mcpClient.listTools();
-  },
+  tools: (await mcpClient.listTools()) as any,
 });
