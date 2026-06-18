@@ -24,6 +24,7 @@
     "@mastra/loggers": "^1.1.2",
     "@mastra/memory": "^1.20.5",
     "@mastra/observability": "^1.14.3",
+    "ollama-ai-provider-v2": "^3.6.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
