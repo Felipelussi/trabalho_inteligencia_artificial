@@ -1,30 +1,58 @@
-# tutor_inteligente
+# Tutor Inteligente
 
-Welcome to your new [Mastra](https://mastra.ai/) project! We're excited to see what you'll build.
+Tutor para uma disciplina universitária que responde perguntas do aluno com base nos
+materiais didáticos (PDFs), usando dois agentes locais que colaboram.
 
-## Getting Started
+## Arquitetura (resumo)
 
-Start the development server:
+- **Agente Tutor (supervisor)** — conversa com o aluno (memória multi-turno) e delega
+  a recuperação ao Recuperador; sintetiza a resposta didática citando as fontes.
+- **Agente Recuperador (subagente)** — usa a tool `searchMaterials` exposta via **MCP**
+  para buscar trechos relevantes na base vetorial.
+- **RAG** — PDFs são divididos em chunks, transformados em **embeddings locais**
+  (`nomic-embed-text` via Ollama) e guardados em um índice **LibSQLVector** local.
+- **Tudo local** — LLM (`llama3.2:3b`) e embeddings rodam no **Ollama**.
 
-```shell
-pnpm run dev
+Detalhes em [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
+
+## Pré-requisitos
+
+1. Node.js >= 22.13 e `pnpm`.
+2. [Ollama](https://ollama.com) instalado e rodando (`ollama serve`).
+3. Modelos baixados:
+   ```bash
+   ollama pull llama3.2:3b
+   ollama pull nomic-embed-text
+   ```
+
+## Setup
+
+```bash
+pnpm install
+cp .env.example .env   # ajuste se quiser
 ```
 
-Open [http://localhost:4111](http://localhost:4111) in your browser to access [Mastra Studio](https://mastra.ai/docs/studio/overview). It provides an interactive UI for building and testing your agents, along with a REST API that exposes your Mastra application as a local service. This lets you start building without worrying about integration right away.
+## Uso
 
-You can start editing files inside the `src/mastra` directory. The development server will automatically reload whenever you make changes.
+1. Coloque os PDFs da disciplina em `materials/`.
+2. Construa a base vetorial:
+   ```bash
+   pnpm ingest
+   ```
+3. Converse com o tutor:
+   ```bash
+   pnpm chat
+   ```
+   Ou pergunta única: `pnpm chat "o que é uma transação ACID?"`
 
-## Learn more
+## Modelo
 
-To learn more about Mastra, visit our [documentation](https://mastra.ai/docs/). Your bootstrapped project includes example code for [agents](https://mastra.ai/docs/agents/overview), [tools](https://mastra.ai/docs/agents/using-tools), [workflows](https://mastra.ai/docs/workflows/overview), [scorers](https://mastra.ai/docs/evals/overview), and [observability](https://mastra.ai/docs/observability/overview).
+O modelo é configurável por env (`TUTOR_LLM_MODEL`). Se o tutor não delegar/usar a tool
+de forma confiável com `llama3.2:3b`, troque por um modelo melhor em tool-calling:
+`qwen2.5:3b` (leve) ou `llama3.1:8b`.
 
-If you're new to AI agents, check out our [course](https://mastra.ai/learn) and [YouTube videos](https://youtube.com/@mastra-ai). You can also join our [Discord](https://discord.gg/BTYqqHKUrf) community to get help and share your projects.
+## Testes
 
-## Deploy to the Mastra platform
-
-The [Mastra platform](https://projects.mastra.ai) provides two products for deploying and managing AI applications built with the Mastra framework:
-
-- **Studio**: A hosted visual environment for testing agents, running workflows, and inspecting traces
-- **Server**: A production deployment target that runs your Mastra application as an API server
-
-Learn more in the [Mastra platform documentation](https://mastra.ai/docs/mastra-platform/overview).
+```bash
+pnpm test
+```
