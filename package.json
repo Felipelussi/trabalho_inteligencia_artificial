@@ -28,6 +28,7 @@
     "@mastra/memory": "^1.20.5",
     "@mastra/observability": "^1.14.3",
     "@mastra/rag": "^2.2.1",
+    "ai": "^6.0.208",
     "ollama-ai-provider-v2": "^3.6.0",
     "unpdf": "^1.6.2",
     "zod": "^4.4.3"
