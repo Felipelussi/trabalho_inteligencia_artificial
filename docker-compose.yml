@@ -21,13 +21,13 @@ services:
         /bin/ollama serve &
         until /bin/ollama list >/dev/null 2>&1; do sleep 1; done
         echo "Baixando modelos locais (primeira vez pode demorar)..."
-        /bin/ollama pull llama3.2:3b
-        /bin/ollama pull nomic-embed-text
+        /bin/ollama pull ${TUTOR_LLM_MODEL:-qwen2.5:3b}
+        /bin/ollama pull ${TUTOR_EMBED_MODEL:-nomic-embed-text}
         echo "Modelos prontos."
         wait
     healthcheck:
       # So fica "healthy" quando os DOIS modelos ja estao disponiveis.
-      test: ["CMD-SHELL", "ollama list | grep -q llama3.2 && ollama list | grep -q nomic-embed-text"]
+      test: ["CMD-SHELL", "ollama list | grep -q ${TUTOR_LLM_MODEL:-qwen2.5:3b} && ollama list | grep -q ${TUTOR_EMBED_MODEL:-nomic-embed-text}"]
       interval: 10s
       timeout: 10s
       retries: 120
@@ -43,6 +43,11 @@ services:
       # Aponta o provider local para o container do Ollama.
       OLLAMA_BASE_URL: http://ollama:11434/api
       TUTOR_DB_URL: file:/app/data/tutor.db
+      # O .env do host NAO entra no container (nao e copiado nem montado), entao
+      # repassamos o modelo explicitamente. Mesma origem/default do servico ollama,
+      # garantindo que o app pede exatamente o modelo que foi baixado.
+      TUTOR_LLM_MODEL: ${TUTOR_LLM_MODEL:-qwen2.5:3b}
+      TUTOR_EMBED_MODEL: ${TUTOR_EMBED_MODEL:-nomic-embed-text}
     volumes:
       # Banco (indice vetorial + memoria de conversa) persistente.
       - tutor-data:/app/data
