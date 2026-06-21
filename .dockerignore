@@ -1,0 +1,13 @@
+node_modules
+dist
+.mastra
+*.db
+*.db-*
+.git
+.idea
+.env
+.env.*
+docs/superpowers
+npm-debug.log
+output.txt
+.output.txt

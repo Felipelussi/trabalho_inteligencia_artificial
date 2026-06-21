@@ -1,0 +1,57 @@
+# Sobe todo o ambiente do Tutor Inteligente sem o professor precisar instalar
+# Node, Ollama ou baixar modelos manualmente.
+#
+# Uso (um unico comando):
+#   docker compose run --rm tutor
+#
+# Na primeira vez, o servico "ollama" baixa os modelos (~2-3 GB) — pode demorar
+# alguns minutos. Depois fica em cache no volume e as proximas execucoes sao rapidas.
+
+services:
+  # Modelos locais (LLM + embeddings) executados via Ollama.
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    # Inicia o servidor e baixa os modelos necessarios na primeira execucao.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        /bin/ollama serve &
+        until /bin/ollama list >/dev/null 2>&1; do sleep 1; done
+        echo "Baixando modelos locais (primeira vez pode demorar)..."
+        /bin/ollama pull llama3.2:3b
+        /bin/ollama pull nomic-embed-text
+        echo "Modelos prontos."
+        wait
+    healthcheck:
+      # So fica "healthy" quando os DOIS modelos ja estao disponiveis.
+      test: ["CMD-SHELL", "ollama list | grep -q llama3.2 && ollama list | grep -q nomic-embed-text"]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+      start_period: 10s
+
+  # Aplicacao: agentes Tutor (supervisor) + Recuperador (subagente) + CLI.
+  tutor:
+    build: .
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      # Aponta o provider local para o container do Ollama.
+      OLLAMA_BASE_URL: http://ollama:11434/api
+      TUTOR_DB_URL: file:/app/data/tutor.db
+    volumes:
+      # Banco (indice vetorial + memoria de conversa) persistente.
+      - tutor-data:/app/data
+      # Permite trocar os PDFs sem rebuild (precisam existir no repositorio).
+      - ./materials:/app/materials:ro
+    # Necessario para o REPL interativo do "pnpm chat".
+    stdin_open: true
+    tty: true
+
+volumes:
+  ollama-data:
+  tutor-data:
