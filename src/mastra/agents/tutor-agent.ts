@@ -1,8 +1,8 @@
 import { Agent } from '@mastra/core/agent';
 import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
-import { ollama } from '../ollama';
 import { config } from '../config';
+import { chatModel } from '../models';
 import { retrieverAgent } from './retriever-agent';
 
 export const tutorAgent = new Agent({
@@ -20,7 +20,7 @@ Como agir:
 3. Cite as fontes entre parênteses, por exemplo: (Fonte: aula03.pdf).
 4. Se o retrieverAgent responder "NENHUM_TRECHO_ENCONTRADO" ou não trouxer conteúdo que responda à pergunta, diga: "Não encontrei isso nos materiais indexados." e NÃO invente.
 5. Para saudações ou conversa trivial, responda diretamente sem delegar.`,
-  model: ollama(config.llmModel),
+  model: chatModel(),
   agents: { retrieverAgent },
   memory: new Memory({
     storage: new LibSQLStore({ id: 'tutor-memory', url: config.dbUrl }),

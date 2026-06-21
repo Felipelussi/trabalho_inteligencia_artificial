@@ -1,6 +1,5 @@
 import { Agent } from '@mastra/core/agent';
-import { ollama } from '../ollama';
-import { config } from '../config';
+import { chatModel } from '../models';
 import { searchMaterialsTool } from '../tools/search-materials-tool';
 
 export const retrieverAgent = new Agent({
@@ -17,7 +16,7 @@ Regras:
 - Para qualquer pedido, chame a tool searchMaterials usando a pergunta recebida como "query".
 - Devolva CADA trecho recuperado seguido de "[Fonte: <arquivo>]".
 - Se a busca não retornar nenhum trecho, responda exatamente: NENHUM_TRECHO_ENCONTRADO`,
-  model: ollama(config.llmModel),
+  model: chatModel(),
   // A tool de busca é usada diretamente (sem MCP). O acesso por MCP é exposto
   // "para fora" pelo servidor em src/mastra/mcp/server.ts, que publica os agentes.
   tools: { searchMaterials: searchMaterialsTool },

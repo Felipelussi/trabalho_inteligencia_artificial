@@ -1,6 +1,7 @@
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { tutorAgent } from '../src/mastra/agents/tutor-agent';
+import { chatModelLabel } from '../src/mastra/models';
 
 // One stable thread per process => the Tutor's Memory accumulates the conversation.
 const THREAD = 'cli-session';
@@ -15,6 +16,7 @@ async function answer(question: string): Promise<string> {
 }
 
 async function main() {
+  console.error(`[modelo: ${chatModelLabel()}]`);
   // One-shot mode: `pnpm chat "minha pergunta"`
   const oneShot = process.argv.slice(2).join(' ').trim();
   if (oneShot) {
