@@ -32,7 +32,7 @@ export const config = {
   /** Base URL for the local Ollama provider (it appends /chat, /embeddings, etc.). */
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434/api',
   /** Chat model used by both agents (Ollama, local). Must support tool calling. */
-  llmModel: process.env.TUTOR_LLM_MODEL ?? 'qwen2.5:3b',
+  llmModel: process.env.TUTOR_LLM_MODEL ?? 'llama3.2:3b',
   /**
    * OpenAI API key (opcional). Se definido, os agentes usam a OpenAI no lugar do
    * Ollama — útil para testar com um modelo melhor em tool-calling. O Mastra lê

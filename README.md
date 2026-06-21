@@ -2,24 +2,8 @@
 
 > Trabalho Final · **Inteligência Artificial** · Profs. Diego A. Lusa e Roberto Rabello
 > Tema escolhido: **Tutor inteligente para disciplinas específicas, com recuperação de materiais didáticos**
-> Disciplina de demonstração: **Redes de Computadores** (protocolos TCP e IP)
-
+o 
 Um tutor que responde dúvidas de estudantes **exclusivamente com base nos materiais didáticos da disciplina**, usando **dois agentes especializados** que cooperam, **modelos de linguagem executados localmente** (via Ollama) e um pipeline de **RAG** sobre uma base vetorial. Toda a interação acontece pelo **terminal**.
-
----
-
-## Integrantes da equipe
-
-| Nome | Matrícula | GitHub |
-|------|-----------|--------|
-| _preencher_ | _preencher_ | _preencher_ |
-| _preencher_ | _preencher_ | _preencher_ |
-| _preencher_ | _preencher_ | _preencher_ |
-| _preencher_ | _preencher_ | _preencher_ |
-
-> **Repositório:** _inserir link público do GitHub aqui_
-
----
 
 ## Descrição do problema
 
@@ -38,16 +22,21 @@ Oferecer, via terminal, um assistente de estudos que:
 2. **recupera** os trechos mais relevantes dos materiais (RAG sobre base vetorial);
 3. **sintetiza** uma explicação didática **fundamentada apenas nesses trechos**, citando as fontes;
 4. **recusa** responder (sem inventar) quando nada relevante é encontrado;
-5. roda **100% local**, sem depender de APIs pagas.
+5. roda **100% local**, sem depender de APIs pagas (Não consegue fazer tool calls corretos com modelos tão básicos).
 
 ---
 
 ## Arquitetura multiagente
 
-A solução usa o padrão **supervisor -> subagente** do framework Mastra. Um agente conversacional (Tutor) **coordena** e **delega** a tarefa de recuperação a um agente especialista (Recuperador).
+A solução usa o padrão **supervisor -> subagente** do framework Mastra. Um agente conversacional (Tutor) **coordena** e **delega** a tarefa de recuperação a um agente especialista (Recuperador). Todo o sistema de agentes é, por sua vez, **publicado via MCP** para clientes externos (veja [Como o MCP foi utilizado](#como-o-mcp-model-context-protocol-foi-utilizado)).
 
 ```
-  +-------------+   pergunta        +--------------------------------------------+
+  Cliente MCP externo                        +----------------------------------+
+  (Claude Desktop /        --ask_tutor-----> |  Servidor MCP (Tutor Inteligente)|
+   Mastra Studio)          --ask_retriever-> |  publica os agentes como tools   |
+                                             +----------------+-----------------+
+                                                              |
+  +-------------+   pergunta        +------------------------ v ------------------+
   |  Terminal   | ----------------> |  AGENTE TUTOR  (supervisor + memoria)      |
   | (pnpm chat) | <---------------- |  - mantem o historico da conversa          |
   +-------------+   resposta        |  - decide quando precisa do material       |
@@ -57,13 +46,12 @@ A solução usa o padrão **supervisor -> subagente** do framework Mastra. Um ag
                                     +--------------------------------------------+
                                     |  AGENTE RECUPERADOR  (subagente)           |
                                     |  - recebe a pergunta                       |
-                                    |  - chama a tool searchMaterials --+        |
-                                    |  - devolve trechos + fontes        |       |
+                                    |  - chama a tool searchMaterials (direto) --+
+                                    |  - devolve trechos + fontes                |
                                     +------------------------------------+-------+
-                                                                         | (MCP / stdio)
                                                                          v
                                     +--------------------------------------------+
-                                    |  Servidor MCP  ->  busca vetorial          |
+                                    |  busca vetorial                            |
                                     |  embedQuery(pergunta) -> LibSQLVector.query|
                                     |  (Ollama: nomic-embed-text)                |
                                     +--------------------------------------------+
@@ -85,7 +73,7 @@ A divisão é **funcional**, não decorativa: o fluxo "decidir -> recuperar -> f
 | Agente | Arquivo | Responsabilidade | Entradas | Saídas |
 |---|---|---|---|---|
 | **Tutor** (supervisor) | `src/mastra/agents/tutor-agent.ts` | Conversa com o aluno (memória multi-turno), decide quando consultar o material, **sintetiza** a resposta didática citando fontes e **recusa** quando não há base. | Pergunta do aluno + histórico da conversa | Resposta didática fundamentada |
-| **Recuperador** (subagente) | `src/mastra/agents/retriever-agent.ts` | **Recuperação** pura: recebe uma consulta, aciona a tool de busca semântica via MCP e devolve os trechos com a fonte de cada um. Não explica e não inventa. | Consulta de busca | Trechos relevantes + `[Fonte: arquivo]` |
+| **Recuperador** (subagente) | `src/mastra/agents/retriever-agent.ts` | **Recuperação** pura: recebe uma consulta, aciona a tool de busca semântica e devolve os trechos com a fonte de cada um. Não explica e não inventa. | Consulta de busca | Trechos relevantes + `[Fonte: arquivo]` |
 
 ---
 
@@ -93,19 +81,29 @@ A divisão é **funcional**, não decorativa: o fluxo "decidir -> recuperar -> f
 
 | Tool | Arquivo | O que faz | Acionada por |
 |---|---|---|---|
-| `searchMaterials` | `src/mastra/tools/search-materials-tool.ts` | Recebe uma `query`, gera o embedding da consulta, faz busca por similaridade na base vetorial (`topK` + `minScore`) e retorna os trechos mais relevantes com `text`, `source` e `score`. | Agente Recuperador (via **MCP**) |
+| `searchMaterials` | `src/mastra/tools/search-materials-tool.ts` | Recebe uma `query`, gera o embedding da consulta, faz busca por similaridade na base vetorial (`topK` + `minScore`) e retorna os trechos mais relevantes com `text`, `source` e `score`. | Agente Recuperador |
 
 A tool tem `inputSchema`/`outputSchema` validados com **Zod**, garantindo entrada/saída tipadas e seguras.
 
 ## Como o MCP (Model Context Protocol) foi utilizado
 
-O MCP é usado para **padronizar e isolar o acesso ao recurso externo** (a base documental), expondo a busca como uma ferramenta consumida por protocolo — exatamente o papel previsto no enunciado ("integração entre agentes e ferramentas").
+O MCP é usado para **publicar o sistema de agentes como um recurso padronizado e consumível por protocolo** — exatamente o papel previsto no enunciado ("integração entre agentes e ferramentas"). Em vez de embutir a integração no app, os **agentes** são expostos como tools MCP, de modo que **qualquer cliente MCP** (Claude Desktop, Mastra Studio, outro app) possa conversar com o tutor sem conhecer seus detalhes internos.
 
-- **Servidor MCP** (`src/mastra/mcp/server.ts`): cria um `MCPServer` que publica a tool `searchMaterials` por transporte **stdio** (`server.startStdio()`). Ele roda como um **processo separado**.
-- **Cliente MCP** (`src/mastra/mcp/client.ts`): um `MCPClient` que **inicia o servidor como subprocesso** (`npx tsx server.ts`) e expõe suas ferramentas com namespacing (`tutorDocs_searchMaterials`).
-- O **Agente Recuperador** carrega essas ferramentas via `await mcpClient.listTools()` e as utiliza como se fossem nativas.
+- **Servidor MCP** (`src/mastra/mcp/server.ts`): cria um `MCPServer` que publica os **dois agentes** como tools. A chave de cada agente vira o nome da tool:
+  - **`ask_tutor`** — conversa com o Tutor (supervisor; usa RAG internamente e responde com fontes);
+  - **`ask_retriever`** — recuperação pura dos trechos crus dos materiais.
+- **Exposição via HTTP / Studio:** o servidor é registrado na instância Mastra (`src/mastra/index.ts -> mcpServers: { tutorDocs }`), que o serve por HTTP e o exibe no **Mastra Studio** (`pnpm dev`).
+- **Exposição via stdio (cliente externo):** para ligar o servidor a um cliente MCP local como o **Claude Desktop**, há o entrypoint stdio independente `scripts/mcp-server.ts` (`server.startStdio()`), executado com **`pnpm mcp`**.
 
-Assim, a recuperação não é uma chamada de função embutida no agente: ela atravessa a fronteira do protocolo MCP, o que torna o recurso **desacoplado, padronizado e substituível** (poderia ser consumido por qualquer cliente MCP, inclusive o Mastra Studio).
+Internamente, o Agente Recuperador chama a tool `searchMaterials` **diretamente** (sem roundtrip MCP) — o MCP atua na **fronteira externa** do sistema, tornando os agentes **desacoplados, padronizados e reutilizáveis** por qualquer cliente do protocolo.
+
+> **Verificação rápida** do servidor MCP (lista as tools publicadas):
+> ```bash
+> printf '%s\n%s\n' \
+>   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0.0.0"}}}' \
+>   '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | pnpm mcp
+> # -> retorna as tools ask_tutor e ask_retriever
+> ```
 
 ## Estratégia de RAG (Retrieval-Augmented Generation)
 
@@ -162,7 +160,7 @@ O `minScore` evita devolver trechos irrelevantes; quando nenhum trecho passa do 
 | Pacote | Papel |
 |---|---|
 | `@mastra/core` | Framework de agentes (Agent, Memory, padrão supervisor) |
-| `@mastra/mcp` | Servidor e cliente **MCP** (stdio) |
+| `@mastra/mcp` | Servidor **MCP** que publica os agentes (HTTP + stdio) |
 | `@mastra/rag` | Processamento de documentos / **chunking** (`MDocument`) |
 | `@mastra/libsql` | Armazenamento: `LibSQLStore` (memória) + `LibSQLVector` (vetorial) |
 | `@mastra/memory` | Memória de conversa multi-turno |
@@ -229,12 +227,6 @@ docker compose down
 docker compose down -v
 ```
 
-> **Importante:** os PDFs em `materials/` precisam estar **commitados no repositório** para que funcionem após um `git clone`. Para trocar a disciplina, substitua os PDFs, rode `docker compose down -v` e em seguida `docker compose run --rm tutor` novamente.
-
-> **GPU:** por padrão o Ollama roda em CPU (funciona em qualquer máquina, porém mais lento). Em máquinas com GPU NVIDIA + NVIDIA Container Toolkit é possível acelerar adicionando `deploy.resources.reservations.devices` ao serviço `ollama`.
-
----
-
 ## Instalação e execução (sem Docker)
 
 ### 1. Pré-requisitos
@@ -279,7 +271,12 @@ pnpm chat "O que e o protocolo TCP?"       # pergunta unica (bom para demo)
 
 ### (Opcional) Inspeção visual — Mastra Studio
 ```bash
-pnpm dev      # abre http://localhost:4111 e mostra os dois agentes
+pnpm dev      # abre http://localhost:4111: mostra os dois agentes E o servidor MCP (tools ask_tutor / ask_retriever)
+```
+
+### (Opcional) Servidor MCP por stdio — para clientes externos
+```bash
+pnpm mcp      # publica os agentes via MCP/stdio (ex.: Claude Desktop). Veja "Como o MCP foi utilizado".
 ```
 
 ### Testes automatizados
@@ -289,16 +286,16 @@ pnpm test     # vitest (chunking + round-trip da base vetorial)
 
 ### Variáveis de ambiente (`.env`)
 
-| Variável | Padrão | Descrição |
-|---|---|---|
+| Variável | Padrão                       | Descrição |
+|---|------------------------------|---|
 | `OLLAMA_BASE_URL` | `http://localhost:11434/api` | Endpoint do Ollama |
-| `TUTOR_LLM_MODEL` | `llama3.2:3b` | Modelo de linguagem |
-| `TUTOR_EMBED_MODEL` | `nomic-embed-text` | Modelo de embeddings |
-| `TUTOR_EMBED_DIM` | `768` | Dimensão dos vetores (deve casar com o modelo) |
-| `TUTOR_DB_URL` | `file:./tutor.db` | Arquivo libSQL (vetorial + memória) |
-| `TUTOR_INDEX` | `materiais` | Nome do índice vetorial |
-| `TUTOR_TOPK` | `4` | Nº de trechos recuperados por consulta |
-| `TUTOR_MIN_SCORE` | `0.3` | Similaridade mínima para retornar um trecho |
+| `TUTOR_LLM_MODEL` | `llama3.2:3b`                | Modelo de linguagem |
+| `TUTOR_EMBED_MODEL` | `nomic-embed-text`           | Modelo de embeddings |
+| `TUTOR_EMBED_DIM` | `768`                        | Dimensão dos vetores (deve casar com o modelo) |
+| `TUTOR_DB_URL` | `file:./tutor.db`            | Arquivo libSQL (vetorial + memória) |
+| `TUTOR_INDEX` | `materials`                  | Nome do índice vetorial |
+| `TUTOR_TOPK` | `4`                          | Nº de trechos recuperados por consulta |
+| `TUTOR_MIN_SCORE` | `0.3`                        | Similaridade mínima para retornar um trecho |
 
 ---
 
@@ -349,17 +346,18 @@ src/mastra/
     embeddings.ts               # embedTexts() / embedQuery()
     vector-store.ts             # LibSQLVector + ensureIndex / upsertChunks / searchPassages
     documents.ts                # extracao de PDF (unpdf) + chunking (MDocument)
+  models.ts                     # selecao do LLM de chat (Ollama local / OpenAI opcional)
   tools/
     search-materials-tool.ts    # tool de busca semantica
   mcp/
-    server.ts                   # servidor MCP (stdio) expondo a tool
-    client.ts                   # cliente MCP que inicia o servidor
+    server.ts                   # servidor MCP que publica os agentes (ask_tutor / ask_retriever)
   agents/
-    retriever-agent.ts          # Agente Recuperador (subagente + tool MCP)
+    retriever-agent.ts          # Agente Recuperador (subagente + tool searchMaterials)
     tutor-agent.ts              # Agente Tutor (supervisor + memoria)
 scripts/
   ingest.ts                     # CLI de ingestao (PDFs -> base vetorial)
   chat.ts                       # CLI de conversa multi-turno
+  mcp-server.ts                 # entrypoint stdio do servidor MCP (pnpm mcp)
 tests/                          # testes (vitest)
 materials/                      # PDFs da disciplina (base de conhecimento)
 docs/ARQUITETURA.md             # documentacao tecnica complementar
@@ -372,7 +370,7 @@ docs/ARQUITETURA.md             # documentacao tecnica complementar
 | 1 | Arquitetura multiagente | `tutor-agent.ts` (supervisor/síntese) + `retriever-agent.ts` (recuperação) |
 | 2 | Uso de LLMs | Tutor decide a delegação e compõe a resposta; Recuperador formula/aciona a busca |
 | 3 | Modelos locais (LLaMA/similar) | `llama3.2:3b` + `nomic-embed-text` via **Ollama** (`ollama.ts`, `config.ts`) |
-| 4 | MCP | `mcp/server.ts` + `mcp/client.ts` (stdio) expondo `searchMaterials` |
+| 4 | MCP | `mcp/server.ts` publica os agentes como tools MCP (`ask_tutor` / `ask_retriever`), servidas por HTTP no Studio e por stdio via `pnpm mcp` (`scripts/mcp-server.ts`) |
 | 5 | RAG | `rag/vector-store.ts` (`searchPassages`) + `scripts/ingest.ts` |
 | 6 | Embeddings + armazenamento vetorial | `rag/embeddings.ts` + `LibSQLVector` (768 dims, cosseno) |
 | 7 | Tools para os agentes | `tools/search-materials-tool.ts` |
@@ -389,7 +387,7 @@ docs/ARQUITETURA.md             # documentacao tecnica complementar
 
 ## Reflexão crítica
 
-O projeto mostra, de forma enxuta e funcional, a integração dos principais conceitos da disciplina: **coordenação entre agentes** (supervisor + subagente), **execução local de modelos** (LLaMA via Ollama), **uso de contexto recuperado** (RAG com base vetorial) e **acesso a ferramentas por protocolo padronizado** (MCP). A maior parte das limitações observadas vem da **capacidade do modelo local leve**, e não da arquitetura — que permanece válida e diretamente escalável a modelos melhores apenas trocando uma variável de ambiente. O principal ganho da abordagem multiagente aqui é a **separação de responsabilidades** e o **controle explícito** sobre quando recuperar contexto, o que torna o sistema mais auditável e menos propenso a alucinação do que um agente único respondendo "de cabeça".
+O projeto mostra, de forma enxuta e funcional, a integração dos principais conceitos da disciplina: **coordenação entre agentes** (supervisor + subagente), **execução local de modelos** (LLaMA via Ollama), **uso de contexto recuperado** (RAG com base vetorial) e **exposição do sistema por protocolo padronizado** (MCP, publicando os agentes como tools consumíveis por qualquer cliente). A maior parte das limitações observadas vem da **capacidade do modelo local leve**, e não da arquitetura — que permanece válida e diretamente escalável a modelos melhores apenas trocando uma variável de ambiente. O principal ganho da abordagem multiagente aqui é a **separação de responsabilidades** e o **controle explícito** sobre quando recuperar contexto, o que torna o sistema mais auditável e menos propenso a alucinação do que um agente único respondendo "de cabeça".
 
 ---
 
