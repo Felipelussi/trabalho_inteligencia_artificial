@@ -1,58 +1,396 @@
-# Tutor Inteligente
+# Tutor Inteligente — Sistema Multiagente com LLMs Locais
 
-Tutor para uma disciplina universitária que responde perguntas do aluno com base nos
-materiais didáticos (PDFs), usando dois agentes locais que colaboram.
+> Trabalho Final · **Inteligência Artificial** · Profs. Diego A. Lusa e Roberto Rabello
+> Tema escolhido: **Tutor inteligente para disciplinas específicas, com recuperação de materiais didáticos**
+> Disciplina de demonstração: **Redes de Computadores** (protocolos TCP e IP)
 
-## Arquitetura (resumo)
+Um tutor que responde dúvidas de estudantes **exclusivamente com base nos materiais didáticos da disciplina**, usando **dois agentes especializados** que cooperam, **modelos de linguagem executados localmente** (via Ollama) e um pipeline de **RAG** sobre uma base vetorial. Toda a interação acontece pelo **terminal**.
 
-- **Agente Tutor (supervisor)** — conversa com o aluno (memória multi-turno) e delega
-  a recuperação ao Recuperador; sintetiza a resposta didática citando as fontes.
-- **Agente Recuperador (subagente)** — usa a tool `searchMaterials` exposta via **MCP**
-  para buscar trechos relevantes na base vetorial.
-- **RAG** — PDFs são divididos em chunks, transformados em **embeddings locais**
-  (`nomic-embed-text` via Ollama) e guardados em um índice **LibSQLVector** local.
-- **Tudo local** — LLM (`llama3.2:3b`) e embeddings rodam no **Ollama**.
+---
 
-Detalhes em [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
+## Integrantes da equipe
 
-## Pré-requisitos
+| Nome | Matrícula | GitHub |
+|------|-----------|--------|
+| _preencher_ | _preencher_ | _preencher_ |
+| _preencher_ | _preencher_ | _preencher_ |
+| _preencher_ | _preencher_ | _preencher_ |
+| _preencher_ | _preencher_ | _preencher_ |
 
-1. Node.js >= 22.13 e `pnpm`.
-2. [Ollama](https://ollama.com) instalado e rodando (`ollama serve`).
-3. Modelos baixados:
-   ```bash
-   ollama pull llama3.2:3b
-   ollama pull nomic-embed-text
-   ```
+> **Repositório:** _inserir link público do GitHub aqui_
 
-## Setup
+---
+
+## Descrição do problema
+
+Estudantes frequentemente têm dúvidas pontuais sobre o conteúdo de uma disciplina (slides, apostilas, capítulos de livro), mas:
+
+- procurar a resposta manualmente nos PDFs é lento;
+- perguntar a um chatbot genérico (ChatGPT etc.) leva a respostas **não fundamentadas no material da disciplina**, podendo divergir do que o professor adotou e **alucinar** informações.
+
+O problema escolhido é construir um **tutor que só responde com base nos materiais oficiais da disciplina**, citando a fonte de cada resposta e recusando-se a responder quando o conteúdo não está na base — reduzindo alucinação e mantendo aderência ao material adotado.
+
+## Objetivo da solução
+
+Oferecer, via terminal, um assistente de estudos que:
+
+1. recebe a pergunta do aluno em linguagem natural, em **conversa de múltiplos turnos**;
+2. **recupera** os trechos mais relevantes dos materiais (RAG sobre base vetorial);
+3. **sintetiza** uma explicação didática **fundamentada apenas nesses trechos**, citando as fontes;
+4. **recusa** responder (sem inventar) quando nada relevante é encontrado;
+5. roda **100% local**, sem depender de APIs pagas.
+
+---
+
+## Arquitetura multiagente
+
+A solução usa o padrão **supervisor -> subagente** do framework Mastra. Um agente conversacional (Tutor) **coordena** e **delega** a tarefa de recuperação a um agente especialista (Recuperador).
+
+```
+  +-------------+   pergunta        +--------------------------------------------+
+  |  Terminal   | ----------------> |  AGENTE TUTOR  (supervisor + memoria)      |
+  | (pnpm chat) | <---------------- |  - mantem o historico da conversa          |
+  +-------------+   resposta        |  - decide quando precisa do material       |
+                    + fontes        |  - delega -------------+                   |
+                                    +------------------------+-------------------+
+                                                             v
+                                    +--------------------------------------------+
+                                    |  AGENTE RECUPERADOR  (subagente)           |
+                                    |  - recebe a pergunta                       |
+                                    |  - chama a tool searchMaterials --+        |
+                                    |  - devolve trechos + fontes        |       |
+                                    +------------------------------------+-------+
+                                                                         | (MCP / stdio)
+                                                                         v
+                                    +--------------------------------------------+
+                                    |  Servidor MCP  ->  busca vetorial          |
+                                    |  embedQuery(pergunta) -> LibSQLVector.query|
+                                    |  (Ollama: nomic-embed-text)                |
+                                    +--------------------------------------------+
+```
+
+### Por que multiagente (e não um agente único)?
+
+| Critério | Agente único | Arquitetura adotada (2 agentes) |
+|---|---|---|
+| Responsabilidades | Um prompt gigante misturando conversa, busca e síntese | Separação clara: **conversar/sintetizar** (Tutor) vs **recuperar** (Recuperador) |
+| Contexto | O modelo precisa gerenciar tudo de uma vez | O Recuperador recebe só a tarefa de busca; o Tutor só vê os trechos prontos |
+| Controle | Difícil garantir que a busca aconteça | O Tutor decide explicitamente **quando** delegar |
+| Manutenção | Acoplado | Cada agente pode ter prompt/modelo/regras próprios |
+
+A divisão é **funcional**, não decorativa: o fluxo "decidir -> recuperar -> fundamentar" mapeia diretamente nos dois papéis.
+
+### Papel de cada agente
+
+| Agente | Arquivo | Responsabilidade | Entradas | Saídas |
+|---|---|---|---|---|
+| **Tutor** (supervisor) | `src/mastra/agents/tutor-agent.ts` | Conversa com o aluno (memória multi-turno), decide quando consultar o material, **sintetiza** a resposta didática citando fontes e **recusa** quando não há base. | Pergunta do aluno + histórico da conversa | Resposta didática fundamentada |
+| **Recuperador** (subagente) | `src/mastra/agents/retriever-agent.ts` | **Recuperação** pura: recebe uma consulta, aciona a tool de busca semântica via MCP e devolve os trechos com a fonte de cada um. Não explica e não inventa. | Consulta de busca | Trechos relevantes + `[Fonte: arquivo]` |
+
+---
+
+## Tools disponíveis para os agentes
+
+| Tool | Arquivo | O que faz | Acionada por |
+|---|---|---|---|
+| `searchMaterials` | `src/mastra/tools/search-materials-tool.ts` | Recebe uma `query`, gera o embedding da consulta, faz busca por similaridade na base vetorial (`topK` + `minScore`) e retorna os trechos mais relevantes com `text`, `source` e `score`. | Agente Recuperador (via **MCP**) |
+
+A tool tem `inputSchema`/`outputSchema` validados com **Zod**, garantindo entrada/saída tipadas e seguras.
+
+## Como o MCP (Model Context Protocol) foi utilizado
+
+O MCP é usado para **padronizar e isolar o acesso ao recurso externo** (a base documental), expondo a busca como uma ferramenta consumida por protocolo — exatamente o papel previsto no enunciado ("integração entre agentes e ferramentas").
+
+- **Servidor MCP** (`src/mastra/mcp/server.ts`): cria um `MCPServer` que publica a tool `searchMaterials` por transporte **stdio** (`server.startStdio()`). Ele roda como um **processo separado**.
+- **Cliente MCP** (`src/mastra/mcp/client.ts`): um `MCPClient` que **inicia o servidor como subprocesso** (`npx tsx server.ts`) e expõe suas ferramentas com namespacing (`tutorDocs_searchMaterials`).
+- O **Agente Recuperador** carrega essas ferramentas via `await mcpClient.listTools()` e as utiliza como se fossem nativas.
+
+Assim, a recuperação não é uma chamada de função embutida no agente: ela atravessa a fronteira do protocolo MCP, o que torna o recurso **desacoplado, padronizado e substituível** (poderia ser consumido por qualquer cliente MCP, inclusive o Mastra Studio).
+
+## Estratégia de RAG (Retrieval-Augmented Generation)
+
+O RAG acontece em duas fases:
+
+**1. Indexação (offline) — `pnpm ingest`** (`scripts/ingest.ts`)
+```
+materials/*.pdf
+  -> extracao de texto      (unpdf)
+  -> chunking recursivo     (MDocument, maxSize=512, overlap=50)
+  -> embeddings em lote     (Ollama: nomic-embed-text -> vetores 768-dim)
+  -> upsert na base vetorial (LibSQLVector, indice "materiais", metadados: texto + fonte)
+```
+
+**2. Recuperação (em tempo de consulta)** (`src/mastra/rag/vector-store.ts -> searchPassages`)
+```
+pergunta -> embedding da consulta -> LibSQLVector.query(topK=4, minScore=0.3)
+        -> trechos mais similares + fonte -> entregues ao Tutor para fundamentar a resposta
+```
+
+O `minScore` evita devolver trechos irrelevantes; quando nenhum trecho passa do limiar, o Tutor responde que **não encontrou no material** (anti-alucinação). A resposta final é sempre **ancorada nos trechos recuperados**, não no conhecimento paramétrico do modelo.
+
+### Origem e natureza da base de conhecimento
+
+- **Natureza:** materiais didáticos em **PDF** (apostilas/documentos da disciplina).
+- **Origem (demonstração):** documentos sobre os **protocolos TCP e IP** (`materials/tcp.pdf`, `materials/protocolo_ip.pdf`), totalizando **88 chunks** indexados.
+- A base é **trocável**: basta substituir os PDFs em `materials/` e rodar `pnpm ingest` novamente para usar o tutor em qualquer outra disciplina.
+
+### Embeddings e armazenamento vetorial
+
+| Item | Tecnologia | Detalhe |
+|---|---|---|
+| Modelo de embeddings | **`nomic-embed-text`** (Ollama, local) | Vetores de **768 dimensões** |
+| Geração | AI SDK `embed` / `embedMany` | `embedMany` em lote na ingestão; `embed` por consulta |
+| Armazenamento vetorial | **`LibSQLVector`** (`@mastra/libsql`) | Banco **libSQL** local em arquivo (`tutor.db`), métrica de **similaridade de cosseno** |
+| Metadados | texto do chunk + nome do arquivo de origem | usados para citar a fonte |
+
+---
+
+## Modelo local utilizado e forma de execução
+
+- **LLM (raciocínio/síntese/decisão de delegação):** `llama3.2:3b` — modelo da família **LLaMA**, leve, escolhido por rodar bem em **máquinas modestas** (a capacidade de processamento foi o critério, conforme o roteiro permite).
+- **Embeddings:** `nomic-embed-text` — leve (~270MB), 768 dimensões.
+- **Execução:** ambos rodam via **[Ollama](https://ollama.com)** (`http://localhost:11434`), sem nenhuma chamada a serviços externos pagos.
+
+> O modelo de LLM é configurável por variável de ambiente (`TUTOR_LLM_MODEL`), sem alterar o código. Para respostas mais fiéis ao material em demonstrações, recomenda-se um modelo melhor em *tool-calling*, como **`llama3.1:8b`** (se o hardware permitir) ou um **`qwen`** pequeno. Veja [Limitações](#limitacoes-conhecidas).
+
+---
+
+## Dependências do projeto
+
+**Runtime:**
+
+| Pacote | Papel |
+|---|---|
+| `@mastra/core` | Framework de agentes (Agent, Memory, padrão supervisor) |
+| `@mastra/mcp` | Servidor e cliente **MCP** (stdio) |
+| `@mastra/rag` | Processamento de documentos / **chunking** (`MDocument`) |
+| `@mastra/libsql` | Armazenamento: `LibSQLStore` (memória) + `LibSQLVector` (vetorial) |
+| `@mastra/memory` | Memória de conversa multi-turno |
+| `@mastra/loggers` | Logs |
+| `ollama-ai-provider-v2` | Provider para **LLM e embeddings locais** via Ollama |
+| `ai` | AI SDK (`embed` / `embedMany`) |
+| `unpdf` | Extração de texto de **PDF** |
+| `zod` | Validação de schemas das tools |
+
+**Desenvolvimento:** `mastra` (CLI/Studio), `tsx` (executar TypeScript), `vitest` (testes), `typescript`, `@types/node`.
+
+**Ambiente:** Node.js **>= 22.13**, `pnpm`, **Ollama**.
+
+---
+
+## Execução com Docker (recomendado)
+
+Esta é a forma mais simples: **não exige instalar Node, pnpm nem Ollama, e não precisa ajustar nenhuma variável de ambiente**. O Docker sobe tudo — inclusive o Ollama e o download dos modelos locais.
+
+**Pré-requisito único:** Docker + Docker Compose instalados.
+
+```bash
+docker compose run --rm tutor
+```
+
+Esse único comando:
+
+1. constrói a imagem da aplicação;
+2. sobe o container do **Ollama** e baixa os modelos `llama3.2:3b` e `nomic-embed-text` (na primeira vez baixa ~2-3 GB — pode levar alguns minutos; depois fica em cache);
+3. **indexa automaticamente** os PDFs de `materials/` (apenas na primeira execução);
+4. abre o **chat interativo no seu terminal**.
+
+### Como conversar com o agente
+
+O `docker compose run` conecta o **terminal interativo** (stdin/TTY) ao container, então o chat funciona exatamente como rodando localmente:
+
+```
+Tutor Inteligente - faca sua pergunta sobre a disciplina (digite "sair" para encerrar).
+
+Voce: O que e o protocolo TCP?
+Tutor: ...
+Voce: sair
+```
+
+Para uma **pergunta única** (sem entrar no loop), passe a pergunta como comando:
+
+```bash
+docker compose run --rm tutor pnpm chat "O que e o protocolo TCP?"
+```
+
+### Comandos úteis
+
+```bash
+# Reindexar manualmente (apos trocar PDFs em materials/)
+docker compose run --rm tutor pnpm ingest
+
+# Rodar os testes dentro do container
+docker compose run --rm tutor pnpm test
+
+# Parar o Ollama que ficou rodando em segundo plano
+docker compose down
+
+# Resetar tudo (apaga modelos baixados, indice e memoria) e recomecar do zero
+docker compose down -v
+```
+
+> **Importante:** os PDFs em `materials/` precisam estar **commitados no repositório** para que funcionem após um `git clone`. Para trocar a disciplina, substitua os PDFs, rode `docker compose down -v` e em seguida `docker compose run --rm tutor` novamente.
+
+> **GPU:** por padrão o Ollama roda em CPU (funciona em qualquer máquina, porém mais lento). Em máquinas com GPU NVIDIA + NVIDIA Container Toolkit é possível acelerar adicionando `deploy.resources.reservations.devices` ao serviço `ollama`.
+
+---
+
+## Instalação e execução (sem Docker)
+
+### 1. Pré-requisitos
+
+```bash
+# Node >= 22.13 e pnpm instalados
+# Instale o Ollama: https://ollama.com  e garanta que esta rodando:
+ollama serve            # (em outro terminal, se necessario)
+
+# Baixe os modelos locais:
+ollama pull llama3.2:3b
+ollama pull nomic-embed-text
+```
+
+### 2. Instalar dependências
 
 ```bash
 pnpm install
-cp .env.example .env   # ajuste se quiser
+cp .env.example .env     # opcional: ajuste modelos/parametros
 ```
 
-## Uso
-
-1. Coloque os PDFs da disciplina em `materials/`.
-2. Construa a base vetorial:
-   ```bash
-   pnpm ingest
-   ```
-3. Converse com o tutor:
-   ```bash
-   pnpm chat
-   ```
-   Ou pergunta única: `pnpm chat "o que é uma transação ACID?"`
-
-## Modelo
-
-O modelo é configurável por env (`TUTOR_LLM_MODEL`). Se o tutor não delegar/usar a tool
-de forma confiável com `llama3.2:3b`, troque por um modelo melhor em tool-calling:
-`qwen2.5:3b` (leve) ou `llama3.1:8b`.
-
-## Testes
+### 3. Indexar os materiais (construir a base vetorial)
 
 ```bash
-pnpm test
+# Coloque os PDFs da disciplina em materials/ (ja ha exemplos de TCP/IP)
+pnpm ingest
 ```
+Saída esperada (aprox.):
+```
+Indexado protocolo_ip.pdf: 66 chunks
+Indexado tcp.pdf: 22 chunks
+Concluido. 2 arquivo(s) processado(s), 88 chunk(s) no indice "materiais".
+```
+> Para recomeçar do zero (apaga índice **e** memória de conversa): `rm -f tutor.db* && pnpm ingest`
+
+### 4. Conversar com o tutor
+
+```bash
+pnpm chat                                  # modo conversa (multi-turno)
+pnpm chat "O que e o protocolo TCP?"       # pergunta unica (bom para demo)
+```
+
+### (Opcional) Inspeção visual — Mastra Studio
+```bash
+pnpm dev      # abre http://localhost:4111 e mostra os dois agentes
+```
+
+### Testes automatizados
+```bash
+pnpm test     # vitest (chunking + round-trip da base vetorial)
+```
+
+### Variáveis de ambiente (`.env`)
+
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `OLLAMA_BASE_URL` | `http://localhost:11434/api` | Endpoint do Ollama |
+| `TUTOR_LLM_MODEL` | `llama3.2:3b` | Modelo de linguagem |
+| `TUTOR_EMBED_MODEL` | `nomic-embed-text` | Modelo de embeddings |
+| `TUTOR_EMBED_DIM` | `768` | Dimensão dos vetores (deve casar com o modelo) |
+| `TUTOR_DB_URL` | `file:./tutor.db` | Arquivo libSQL (vetorial + memória) |
+| `TUTOR_INDEX` | `materiais` | Nome do índice vetorial |
+| `TUTOR_TOPK` | `4` | Nº de trechos recuperados por consulta |
+| `TUTOR_MIN_SCORE` | `0.3` | Similaridade mínima para retornar um trecho |
+
+---
+
+## Exemplos de uso pelo terminal
+
+**Pergunta sobre conteúdo presente no material (resposta fundamentada + fonte):**
+```
+$ pnpm chat "O que e o protocolo TCP e para que serve?"
+
+O protocolo TCP (Transmission Control Protocol) e um protocolo de transporte
+usado para transferir dados de forma confiavel entre computadores. Ele garante
+a entrega ordenada dos pacotes, controle de fluxo e deteccao de erros, ...
+(Fonte: tcp.pdf)
+```
+
+**Pergunta fora do material (recusa anti-alucinação):**
+```
+$ pnpm chat "Qual a capital da Franca?"
+
+Nao encontrei isso nos materiais indexados.
+```
+
+**Conversa multi-turno (o 2º turno usa o contexto do 1º):**
+```
+$ pnpm chat
+Tutor Inteligente - faca sua pergunta sobre a disciplina (digite "sair" para encerrar).
+
+Voce: O que e o protocolo IP?
+Tutor: O IP (Internet Protocol) e o protocolo responsavel pelo enderecamento e
+       roteamento de pacotes entre redes... (Fonte: protocolo_ip.pdf)
+
+Voce: E quais sao as versoes dele?
+Tutor: As principais versoes do IP sao o IPv4 e o IPv6... (Fonte: protocolo_ip.pdf)
+
+Voce: sair
+```
+
+---
+
+## Organização do repositório
+
+```
+src/mastra/
+  config.ts                     # configuracoes via env (modelos, dims, paths, topK, minScore)
+  ollama.ts                     # provider Ollama local (LLM + embeddings)
+  index.ts                      # registro dos agentes + storage (entrada do Mastra)
+  rag/
+    embeddings.ts               # embedTexts() / embedQuery()
+    vector-store.ts             # LibSQLVector + ensureIndex / upsertChunks / searchPassages
+    documents.ts                # extracao de PDF (unpdf) + chunking (MDocument)
+  tools/
+    search-materials-tool.ts    # tool de busca semantica
+  mcp/
+    server.ts                   # servidor MCP (stdio) expondo a tool
+    client.ts                   # cliente MCP que inicia o servidor
+  agents/
+    retriever-agent.ts          # Agente Recuperador (subagente + tool MCP)
+    tutor-agent.ts              # Agente Tutor (supervisor + memoria)
+scripts/
+  ingest.ts                     # CLI de ingestao (PDFs -> base vetorial)
+  chat.ts                       # CLI de conversa multi-turno
+tests/                          # testes (vitest)
+materials/                      # PDFs da disciplina (base de conhecimento)
+docs/ARQUITETURA.md             # documentacao tecnica complementar
+```
+
+## Mapeamento dos requisitos do trabalho
+
+| # | Requisito | Onde é atendido |
+|---|---|---|
+| 1 | Arquitetura multiagente | `tutor-agent.ts` (supervisor/síntese) + `retriever-agent.ts` (recuperação) |
+| 2 | Uso de LLMs | Tutor decide a delegação e compõe a resposta; Recuperador formula/aciona a busca |
+| 3 | Modelos locais (LLaMA/similar) | `llama3.2:3b` + `nomic-embed-text` via **Ollama** (`ollama.ts`, `config.ts`) |
+| 4 | MCP | `mcp/server.ts` + `mcp/client.ts` (stdio) expondo `searchMaterials` |
+| 5 | RAG | `rag/vector-store.ts` (`searchPassages`) + `scripts/ingest.ts` |
+| 6 | Embeddings + armazenamento vetorial | `rag/embeddings.ts` + `LibSQLVector` (768 dims, cosseno) |
+| 7 | Tools para os agentes | `tools/search-materials-tool.ts` |
+| 8 | Interface via terminal | `scripts/ingest.ts`, `scripts/chat.ts` |
+| 9 | Documentação técnica | este README + `docs/ARQUITETURA.md` |
+
+---
+
+## Limitações conhecidas
+
+- **Qualidade do modelo leve:** o `llama3.2:3b` prioriza rodar em hardware modesto, mas pode **alucinar detalhes** ou citar a fonte de forma imprecisa. O mecanismo de RAG recupera o material correto; a fidelidade da redação depende do modelo. Para maior precisão, use `TUTOR_LLM_MODEL=llama3.1:8b` (ou outro modelo maior) sem alterar o código.
+- **Dependência de *tool-calling*:** o padrão supervisor exige que o modelo emita chamadas de ferramenta/delegação de forma confiável — outro ponto que melhora com modelos maiores.
+- **Dimensão fixa de embeddings:** o índice é criado com 768 dims; trocar o modelo de embeddings exige reindexar (`rm -f tutor.db* && pnpm ingest`).
+
+## Reflexão crítica
+
+O projeto mostra, de forma enxuta e funcional, a integração dos principais conceitos da disciplina: **coordenação entre agentes** (supervisor + subagente), **execução local de modelos** (LLaMA via Ollama), **uso de contexto recuperado** (RAG com base vetorial) e **acesso a ferramentas por protocolo padronizado** (MCP). A maior parte das limitações observadas vem da **capacidade do modelo local leve**, e não da arquitetura — que permanece válida e diretamente escalável a modelos melhores apenas trocando uma variável de ambiente. O principal ganho da abordagem multiagente aqui é a **separação de responsabilidades** e o **controle explícito** sobre quando recuperar contexto, o que torna o sistema mais auditável e menos propenso a alucinação do que um agente único respondendo "de cabeça".
+
+---
+
+Documentação técnica complementar: [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md)
