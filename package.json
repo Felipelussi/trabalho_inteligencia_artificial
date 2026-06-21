@@ -9,6 +9,7 @@
     "start": "mastra start",
     "ingest": "tsx scripts/ingest.ts",
     "chat": "tsx scripts/chat.ts",
+    "mcp": "tsx scripts/mcp-server.ts",
     "test": "vitest run"
   },
   "keywords": [],

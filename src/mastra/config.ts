@@ -12,7 +12,7 @@ export const config = {
   /** libSQL file used for BOTH conversation memory and the vector index. */
   dbUrl: process.env.TUTOR_DB_URL ?? 'file:./tutor.db',
   /** Vector index (collection) name. */
-  indexName: process.env.TUTOR_INDEX ?? 'materiais',
+  indexName: process.env.TUTOR_INDEX ?? 'materials',
   /** Number of chunks to retrieve per query. */
   topK: Number(process.env.TUTOR_TOPK ?? 4),
   /** Minimum cosine similarity for a chunk to be returned. */
