@@ -33,6 +33,14 @@ export const config = {
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434/api',
   /** Chat model used by both agents (Ollama, local). Must support tool calling. */
   llmModel: process.env.TUTOR_LLM_MODEL ?? 'qwen2.5:3b',
+  /**
+   * OpenAI API key (opcional). Se definido, os agentes usam a OpenAI no lugar do
+   * Ollama — útil para testar com um modelo melhor em tool-calling. O Mastra lê
+   * OPENAI_API_KEY do ambiente ao rotear modelos "openai/...".
+   */
+  openaiApiKey: process.env.OPENAI_API_KEY ?? '',
+  /** Modelo OpenAI usado quando openaiApiKey está definido. */
+  openaiModel: process.env.TUTOR_OPENAI_MODEL ?? 'gpt-4o-mini',
   /** Embedding model. nomic-embed-text => 768 dims. */
   embedModel: process.env.TUTOR_EMBED_MODEL ?? 'nomic-embed-text',
   /** Embedding dimension. MUST match the embed model's output and the vector index. */
