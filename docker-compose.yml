@@ -1,22 +1,15 @@
-# Sobe todo o ambiente do Tutor Inteligente sem o professor precisar instalar
-# Node, Ollama ou baixar modelos manualmente.
+# Ambiente completo do Tutor Inteligente (Node + Ollama + modelos).
 #
-# Uso:
 #   docker compose up server      # builda o Mastra e expoe servidor + Studio
 #   docker compose run --rm tutor # abre o chat (cliente que fala com o servidor)
 #
 # Studio + REST: http://localhost:4111
-#
-# Na primeira vez, o servico "ollama" baixa os modelos (~2-3 GB) — pode demorar
-# alguns minutos. Depois fica em cache no volume e as proximas execucoes sao rapidas.
 
 services:
-  # Modelos locais (LLM + embeddings) executados via Ollama.
   ollama:
     image: ollama/ollama:latest
     volumes:
       - ollama-data:/root/.ollama
-    # Inicia o servidor e baixa os modelos necessarios na primeira execucao.
     entrypoint:
       - sh
       - -c
@@ -29,68 +22,51 @@ services:
         echo "Modelos prontos."
         wait
     healthcheck:
-      # So fica "healthy" quando os DOIS modelos ja estao disponiveis.
       test: ["CMD-SHELL", "ollama list | grep -q ${TUTOR_LLM_MODEL:-llama3.2:3b} && ollama list | grep -q ${TUTOR_EMBED_MODEL:-nomic-embed-text}"]
       interval: 10s
       timeout: 10s
       retries: 120
       start_period: 10s
 
-  # Servidor: indexa os materiais (uma vez), builda o Mastra com o Studio embutido
-  # (mastra build --studio) e serve o REST + o Studio (mastra start) na porta 4111.
+  # Indexa os materiais, builda o Mastra com o Studio embutido e serve REST + Studio na 4111.
   server:
     build: .
     depends_on:
       ollama:
         condition: service_healthy
-    # O entrypoint da imagem roda a indexacao quando necessario; depois executa
-    # este comando: builda com o Studio e sobe o servidor de producao.
     command:
       - sh
       - -c
       - pnpm build --studio && pnpm start
     environment:
-      # Aponta o provider local para o container do Ollama.
       OLLAMA_BASE_URL: http://ollama:11434/api
       TUTOR_DB_URL: file:/app/data/tutor.db
-      # Bind em 0.0.0.0 para o servidor ser alcancavel pelo host e pelo container do chat.
       MASTRA_HOST: 0.0.0.0
       PORT: 4111
-      # O .env do host NAO entra no container (nao e copiado nem montado), entao
-      # repassamos o modelo explicitamente. Mesma origem/default do servico ollama,
-      # garantindo que o app pede exatamente o modelo que foi baixado.
       TUTOR_LLM_MODEL: ${TUTOR_LLM_MODEL:-llama3.2:3b}
       TUTOR_EMBED_MODEL: ${TUTOR_EMBED_MODEL:-nomic-embed-text}
     ports:
       - "4111:4111"
     volumes:
-      # Banco (indice vetorial + memoria de conversa) persistente.
       - tutor-data:/app/data
-      # Permite trocar os PDFs sem rebuild (precisam existir no repositorio).
       - ./materials:/app/materials:ro
     healthcheck:
-      # So fica "healthy" quando o servidor (com o Studio) ja responde na 4111.
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4111/').then(()=>process.exit(0)).catch(()=>process.exit(1))\""]
       interval: 10s
       timeout: 10s
       retries: 120
-      # Generoso: a primeira subida inclui o `mastra build`.
       start_period: 90s
 
-  # Chat: cliente interativo que fala com o Tutor pelo servidor HTTP.
+  # Chat interativo: cliente fino que fala com o Tutor pelo servidor HTTP.
   tutor:
     build: .
     depends_on:
       server:
         condition: service_healthy
-    # Cliente fino: nao indexa nem usa o Ollama direto, so chama o servidor.
-    # Limpa o entrypoint da imagem (que faria a indexacao) e roda apenas o chat.
     entrypoint: []
     command: ["pnpm", "chat"]
     environment:
-      # URL do servidor Mastra dentro da rede do compose.
       MASTRA_SERVER_URL: http://server:4111
-    # Necessario para o REPL interativo do "pnpm chat".
     stdin_open: true
     tty: true
 
