@@ -5,6 +5,24 @@
 o 
 Um tutor que responde dúvidas de estudantes **exclusivamente com base nos materiais didáticos da disciplina**, usando **dois agentes especializados** que cooperam, **modelos de linguagem executados localmente** (via Ollama) e um pipeline de **RAG** sobre uma base vetorial. Toda a interação acontece pelo **terminal**.
 
+## Sumário
+
+- [Descrição do problema](#descrição-do-problema)
+- [Objetivo da solução](#objetivo-da-solução)
+- [Arquitetura multiagente](#arquitetura-multiagente)
+- [Tools disponíveis para os agentes](#tools-disponíveis-para-os-agentes)
+- [Como o MCP (Model Context Protocol) foi utilizado](#como-o-mcp-model-context-protocol-foi-utilizado)
+- [Estratégia de RAG (Retrieval-Augmented Generation)](#estratégia-de-rag-retrieval-augmented-generation)
+- [Modelo local utilizado e forma de execução](#modelo-local-utilizado-e-forma-de-execução)
+- [Dependências do projeto](#dependências-do-projeto)
+- [Execução com Docker (recomendado)](#execução-com-docker-recomendado)
+- [Instalação e execução (sem Docker)](#instalação-e-execução-sem-docker)
+- [Exemplos de uso pelo terminal](#exemplos-de-uso-pelo-terminal)
+- [Organização do repositório](#organização-do-repositório)
+- [Mapeamento dos requisitos do trabalho](#mapeamento-dos-requisitos-do-trabalho)
+- [Limitações conhecidas](#limitações-conhecidas)
+- [Reflexão crítica](#reflexão-crítica)
+
 ## Descrição do problema
 
 Estudantes frequentemente têm dúvidas pontuais sobre o conteúdo de uma disciplina (slides, apostilas, capítulos de livro), mas:
@@ -22,7 +40,7 @@ Oferecer, via terminal, um assistente de estudos que:
 2. **recupera** os trechos mais relevantes dos materiais (RAG sobre base vetorial);
 3. **sintetiza** uma explicação didática **fundamentada apenas nesses trechos**, citando as fontes;
 4. **recusa** responder (sem inventar) quando nada relevante é encontrado;
-5. roda **100% local**, sem depender de APIs pagas (Não consegue fazer tool calls corretos com modelos tão básicos).
+5. roda **100% local**, sem depender de APIs pagas (As vezes falha em fazer tool calls corretos com modelos tão básicos).
 
 ---
 
@@ -129,7 +147,7 @@ O `minScore` evita devolver trechos irrelevantes; quando nenhum trecho passa do 
 ### Origem e natureza da base de conhecimento
 
 - **Natureza:** materiais didáticos em **PDF** (apostilas/documentos da disciplina).
-- **Origem (demonstração):** documentos sobre os **protocolos TCP e IP** (`materials/tcp.pdf`, `materials/protocolo_ip.pdf`), totalizando **88 chunks** indexados.
+- **Origem (demonstração):** capítulo **"Redes neurais convolucionais I"** do livro *Inteligência Artificial* (Sidney Cerqueira Bispo dos Santos) — `materials/redes_convuolucionais.pdf`, 17 páginas cobrindo processamento digital de imagens, formação e extração de características, e fundamentos de CNNs.
 - A base é **trocável**: basta substituir os PDFs em `materials/` e rodar `pnpm ingest` novamente para usar o tutor em qualquer outra disciplina.
 
 ### Embeddings e armazenamento vetorial
@@ -141,6 +159,8 @@ O `minScore` evita devolver trechos irrelevantes; quando nenhum trecho passa do 
 | Armazenamento vetorial | **`LibSQLVector`** (`@mastra/libsql`) | Banco **libSQL** local em arquivo (`tutor.db`), métrica de **similaridade de cosseno** |
 | Metadados | texto do chunk + nome do arquivo de origem | usados para citar a fonte |
 
+> **Por que libSQL e não Chroma (ou outro banco vetorial dedicado)?** Além de fazer a busca vetorial, o **libSQL** se integra nativamente com o Mastra para **armazenar o histórico de mensagens das conversas** (memória multi-turno via `LibSQLStore`). Assim, um único banco em arquivo (`tutor.db`) cobre tanto o índice vetorial quanto a memória do Tutor — sem precisar subir e manter um serviço separado só para os vetores.
+
 ---
 
 ## Modelo local utilizado e forma de execução
@@ -149,7 +169,7 @@ O `minScore` evita devolver trechos irrelevantes; quando nenhum trecho passa do 
 - **Embeddings:** `nomic-embed-text` — leve (~270MB), 768 dimensões.
 - **Execução:** ambos rodam via **[Ollama](https://ollama.com)** (`http://localhost:11434`), sem nenhuma chamada a serviços externos pagos.
 
-> O modelo de LLM é configurável por variável de ambiente (`TUTOR_LLM_MODEL`), sem alterar o código. Para respostas mais fiéis ao material em demonstrações, recomenda-se um modelo melhor em *tool-calling*, como **`llama3.1:8b`** (se o hardware permitir) ou um **`qwen`** pequeno. Veja [Limitações](#limitacoes-conhecidas).
+> O modelo de LLM é configurável por variável de ambiente (`TUTOR_LLM_MODEL`), sem alterar o código. **Para modificar o modelo (ou qualquer outra configuração), basta copiar o `.env.example` para `.env` e personalizar os valores** (`cp .env.example .env`). O modelo que obteve maior sucesso foi o llama3.2:3b que está configurado como padrão. Também foi testado com qwen3.5:4b que não conseguia fazer as chamadas ao subagent e tools com precisão. Veja [Limitações](#limitações-conhecidas).
 
 ---
 
@@ -227,6 +247,17 @@ docker compose down
 docker compose down -v
 ```
 
+### Inspeção visual no Mastra Studio
+
+O serviço `server` builda o Mastra com o **Studio embutido** e o serve em `0.0.0.0:4111` (a porta do Mastra, mapeada para o host). Use o Studio para **visualizar a interação entre os agentes** — as chamadas do Tutor (supervisor) ao Recuperador (subagente), as tools acionadas (`searchMaterials`) e o servidor MCP (`ask_tutor` / `ask_retriever`).
+
+```bash
+# Sobe o servidor + Studio (e o Ollama, como dependencia)
+docker compose up server
+```
+
+Depois, abra no navegador: **http://localhost:4111** (equivalente a `0.0.0.0:4111` exposto pelo container).
+
 ## Instalação e execução (sem Docker)
 
 ### 1. Pré-requisitos
@@ -251,22 +282,21 @@ cp .env.example .env     # opcional: ajuste modelos/parametros
 ### 3. Indexar os materiais (construir a base vetorial)
 
 ```bash
-# Coloque os PDFs da disciplina em materials/ (ja ha exemplos de TCP/IP)
+# Coloque os PDFs da disciplina em materials/ (ja ha exemplo de redes convolucionais)
 pnpm ingest
 ```
 Saída esperada (aprox.):
 ```
-Indexado protocolo_ip.pdf: 66 chunks
-Indexado tcp.pdf: 22 chunks
-Concluido. 2 arquivo(s) processado(s), 88 chunk(s) no indice "materiais".
+Indexado redes_convuolucionais.pdf: N chunks
+Concluido. 1 arquivo(s) processado(s), N chunk(s) no indice "materiais".
 ```
 > Para recomeçar do zero (apaga índice **e** memória de conversa): `rm -f tutor.db* && pnpm ingest`
 
 ### 4. Conversar com o tutor
 
 ```bash
-pnpm chat                                  # modo conversa (multi-turno)
-pnpm chat "O que e o protocolo TCP?"       # pergunta unica (bom para demo)
+pnpm chat                                                # modo conversa (multi-turno)
+pnpm chat "O que sao redes neurais convolucionais?"      # pergunta unica (bom para demo)
 ```
 
 ### (Opcional) Inspeção visual — Mastra Studio
@@ -313,12 +343,12 @@ pnpm test     # vitest (chunking + round-trip da base vetorial)
 
 **Pergunta sobre conteúdo presente no material (resposta fundamentada + fonte):**
 ```
-$ pnpm chat "O que e o protocolo TCP e para que serve?"
+$ pnpm chat "O que sao redes neurais convolucionais e para que servem?"
 
-O protocolo TCP (Transmission Control Protocol) e um protocolo de transporte
-usado para transferir dados de forma confiavel entre computadores. Ele garante
-a entrega ordenada dos pacotes, controle de fluxo e deteccao de erros, ...
-(Fonte: tcp.pdf)
+Redes neurais convolucionais (CNNs) sao redes neurais modificadas para lidar
+com imagens de grande porte (com muitos megabytes), reduzindo o custo
+computacional e o risco de overfitting. Sao amplamente usadas em analise
+e processamento de imagens... (Fonte: redes_convuolucionais.pdf)
 ```
 
 **Pergunta fora do material (recusa anti-alucinação):**
@@ -333,12 +363,16 @@ Nao encontrei isso nos materiais indexados.
 $ pnpm chat
 Tutor Inteligente - faca sua pergunta sobre a disciplina (digite "sair" para encerrar).
 
-Voce: O que e o protocolo IP?
-Tutor: O IP (Internet Protocol) e o protocolo responsavel pelo enderecamento e
-       roteamento de pacotes entre redes... (Fonte: protocolo_ip.pdf)
+Voce: O que e processamento digital de imagens?
+Tutor: O processamento digital de imagens trata de tecnicas para aquisicao,
+       representacao e manipulacao de imagens por computador. Uma imagem digital
+       e uma matriz N x M cujos elementos (pixels) representam a intensidade
+       de cinza... (Fonte: redes_convuolucionais.pdf)
 
-Voce: E quais sao as versoes dele?
-Tutor: As principais versoes do IP sao o IPv4 e o IPv6... (Fonte: protocolo_ip.pdf)
+Voce: Quais sao os tres niveis de processamento?
+Tutor: Os tres niveis sao: (1) operacoes basicas como reducao de ruido e ajuste
+       de contraste; (2) segmentacao e extracao de caracteristicas; (3) analise
+       e classificacao de alto nivel... (Fonte: redes_convuolucionais.pdf)
 
 Voce: sair
 ```
@@ -391,14 +425,10 @@ docs/ARQUITETURA.md             # documentacao tecnica complementar
 
 ## Limitações conhecidas
 
-- **Qualidade do modelo leve:** o `llama3.2:3b` prioriza rodar em hardware modesto, mas pode **alucinar detalhes** ou citar a fonte de forma imprecisa. O mecanismo de RAG recupera o material correto; a fidelidade da redação depende do modelo. Para maior precisão, use `TUTOR_LLM_MODEL=llama3.1:8b` (ou outro modelo maior) sem alterar o código.
+- **Qualidade do modelo leve:** o `llama3.2:3b` prioriza rodar em hardware modesto, mas pode **alucinar detalhes** ou citar a fonte de forma imprecisa. O mecanismo de RAG recupera o material correto; a fidelidade da redação depende do modelo.
 - **Dependência de *tool-calling*:** o padrão supervisor exige que o modelo emita chamadas de ferramenta/delegação de forma confiável — outro ponto que melhora com modelos maiores.
 - **Dimensão fixa de embeddings:** o índice é criado com 768 dims; trocar o modelo de embeddings exige reindexar (`rm -f tutor.db* && pnpm ingest`).
 
 ## Reflexão crítica
 
-O projeto mostra, de forma enxuta e funcional, a integração dos principais conceitos da disciplina: **coordenação entre agentes** (supervisor + subagente), **execução local de modelos** (LLaMA via Ollama), **uso de contexto recuperado** (RAG com base vetorial) e **exposição do sistema por protocolo padronizado** (MCP, publicando os agentes como tools consumíveis por qualquer cliente). A maior parte das limitações observadas vem da **capacidade do modelo local leve**, e não da arquitetura — que permanece válida e diretamente escalável a modelos melhores apenas trocando uma variável de ambiente. O principal ganho da abordagem multiagente aqui é a **separação de responsabilidades** e o **controle explícito** sobre quando recuperar contexto, o que torna o sistema mais auditável e menos propenso a alucinação do que um agente único respondendo "de cabeça".
-
----
-
-Documentação técnica complementar: [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md)
+O projeto mostra, de forma enxuta e funcional, a integração dos principais conceitos da disciplina: **coordenação entre agentes** (supervisor + subagente), **execução local de modelos** (LLaMA via Ollama), **uso de contexto recuperado** (RAG com base vetorial) e **exposição do sistema por protocolo padronizado** (MCP, publicando os agentes como tools consumíveis por qualquer cliente). A maior parte das limitações observadas vem da **capacidade do modelo local leve**, e não da arquitetura — que permanece válida e diretamente escalável a modelos melhores apenas trocando uma variável de ambiente. O principal ganho da abordagem multiagente aqui é a **separação de responsabilidades** e o **controle explícito** sobre quando recuperar contexto, o que torna o sistema mais auditável e menos propenso a alucinação do que um agente único.
