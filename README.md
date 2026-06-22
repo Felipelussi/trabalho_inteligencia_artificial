@@ -212,6 +212,7 @@ Esse único comando:
 2. sobe o container do **Ollama** e baixa os modelos `llama3.2:3b` e `nomic-embed-text` (na primeira vez baixa ~2-3 GB — pode levar alguns minutos; depois fica em cache);
 3. **indexa automaticamente** os PDFs de `materials/` (apenas na primeira execução);
 4. abre o **chat interativo no seu terminal**.
+<img width="2337" height="555" alt="image" src="https://github.com/user-attachments/assets/b8de5383-ff9e-4e94-ad86-7d961478a499" />
 
 ### Como conversar com o agente
 
@@ -257,6 +258,7 @@ docker compose up server
 ```
 
 Depois, abra no navegador: **http://localhost:4111** (equivalente a `0.0.0.0:4111` exposto pelo container).
+<img width="1244" height="1246" alt="image" src="https://github.com/user-attachments/assets/34e7c3c9-4fbb-486c-a68f-18216ddb0a30" />
 
 ## Instalação e execução (sem Docker)
 
@@ -318,6 +320,8 @@ claude mcp add --scope project tutor -- pnpm mcp
 ```
 
 Depois, verifique a conexão com `claude mcp list` (deve aparecer `✓ Connected`) ou abra o painel `/mcp` dentro do Claude Code. As tools `ask_tutor` e `ask_retriever` ficam disponíveis na sessão.
+<img width="1056" height="731" alt="image" src="https://github.com/user-attachments/assets/56dec7e5-6914-45c6-b88e-87a3333dda68" />
+<img width="1054" height="1255" alt="image" src="https://github.com/user-attachments/assets/8e7eff67-d3a1-4480-9c00-b231963ccbb7" />
 
 ### Testes automatizados
 ```bash
