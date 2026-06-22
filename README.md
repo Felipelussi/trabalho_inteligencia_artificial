@@ -279,6 +279,16 @@ pnpm dev      # abre http://localhost:4111: mostra os dois agentes E o servidor 
 pnpm mcp      # publica os agentes via MCP/stdio (ex.: Claude Desktop). Veja "Como o MCP foi utilizado".
 ```
 
+#### Usar no Claude Code
+
+Para conectar o servidor ao **Claude Code**, registre-o uma única vez (na raiz do projeto). O `--scope project` grava em `.mcp.json` (versionável), e tudo após `--` é o comando que inicia o servidor stdio:
+
+```bash
+claude mcp add --scope project tutor -- pnpm mcp
+```
+
+Depois, verifique a conexão com `claude mcp list` (deve aparecer `✓ Connected`) ou abra o painel `/mcp` dentro do Claude Code. As tools `ask_tutor` e `ask_retriever` ficam disponíveis na sessão.
+
 ### Testes automatizados
 ```bash
 pnpm test     # vitest (chunking + round-trip da base vetorial)
